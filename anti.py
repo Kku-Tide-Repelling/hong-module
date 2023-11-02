@@ -1,0 +1,198 @@
+### Anti Adaptive Wild Bird Repeller Algorithm
+# - Definition 1. observed_env_data 는 탐지 알고리즘에서 넘어오는 실시간 데이터임
+# - Definition 2. 이 알고리즘의 구현 편의를 위해 1분을 30개의 데이터로 구성하였음
+# - Definition 3. observed_env_data 0 아무것도 탐지 되지 않은 상태, 1~n 탐지된 조류의 타입으로 구성됨
+# - Definition 4. 이 구현에서 알고리즘의 동작은 observed_env_data 존재하는 시간만큼 동작함
+# - Definition 5. INCREASE_REWARD,LONGTERM_DECREASE_REWARD, GAMMA 값은 Exploration and exploitation을 조절하는 상수임, 키우면 더욱 모험적으로, 줄이면 덜 모험적으로
+# - Definition 6. BirdType 가 실제 모든 데이터가 저장되는 변수임, 구성은 [bird num, Long-term invasion, Short-term invasion, Reward table, method_history]
+# - Definition 7. 
+
+import numpy as np
+import datetime
+import random
+import pickle
+# observed_env_data = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+#                      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+#                      0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+#                      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+#                  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+#                  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+#                  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+#                  0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,
+#                  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+#                  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+#                  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+#                  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+#                  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+#                  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+#                  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+#                  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+#                  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+#                  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+#                  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+#                  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+#                  ]
+
+observed_env_data = [1,0,0,0,0,0,1,1,1,1,1,1,0]
+
+Sound = ['EXPLOSION', 'SHOTGUN', 'NOISE']
+Sound_Volume_Level_degree = 3
+
+THREAT_PLAYING_FLAG = False
+
+INCREASE_REWARD = 1.0
+LONGTERM_DECREASE_REWARD = -0.5
+GAMMA = 0.1
+ENDURING_TIME_THRESHOLD = 3
+
+BirdType = []
+
+print(f'This simulation use {len(observed_env_data)} data.')
+
+def find_max_reward_table(arr):
+    max_value = arr[0][0]
+    max_row = 0
+    max_col = 0
+
+    for row in range(len(arr)):
+        for col in range(len(arr[row])):
+            if arr[row][col] > max_value:
+                max_value = arr[row][col]
+                max_row = row
+                max_col = col
+
+    return (max_row, max_col)
+
+def sum_reward(a, reward):
+    if a+reward > 3.0:
+        return 3.0
+    else :
+        if a+reward < 0 :
+            return 0
+        else:
+            return a+reward
+
+def update_reward(method, bird_num, reward):
+    BirdType[bird_num-1][3] += GAMMA 
+    BirdType[bird_num-1][3][method[0]][method[1]] -= GAMMA
+    BirdType[bird_num-1][3][method[0]][method[1]] = sum_reward(BirdType[bird_num-1][3][method[0]][method[1]], reward)
+    print('updated reward table')
+    print(BirdType[bird_num-1][3])
+
+def play_rellering_mothod(method):
+    print(f'play {Sound[method[0]]} Level {method[1]+1}')
+
+    
+def get_before_invasion_time(observed_env_data, bird_num):
+    reinvasion_time = 0
+    flag= False
+    for time, detection_status in enumerate(reversed(observed_env_data)):
+        if detection_status == 0 and flag == False:
+            recently_detected_time = time - 1
+            flag= True
+        elif detection_status==bird_num and flag == True:
+            before_detected_time = time
+            break
+        
+        if time == len(observed_env_data)-1:
+            before_detected_time = 0
+            
+    reinvasion_time = before_detected_time - recently_detected_time
+    
+    return reinvasion_time
+
+def get_current_enduring_time(observed_env_data):
+    enduring_time = 1
+    for time, detection_status in enumerate(reversed(observed_env_data[:-1])):
+        print(time,detection_status)
+        if detection_status == 0:
+            enduring_time = time
+            break
+    return enduring_time
+
+
+def main():
+    # start_time = datetime.datetime.now()
+    enduring_time = 0
+    print('Algorithm start')
+    
+    
+    for t, detection_status in enumerate(observed_env_data):
+        print(f'curruent observasion : {observed_env_data[:t+1]}')
+        if detection_status != 0:
+            if len(BirdType) < detection_status: # First Detection of {detection_status} bird
+                RewardTable = np.zeros((len(Sound),Sound_Volume_Level_degree))
+                # make new bird [bird num, Long-term invasion, Short-term invasion, Reward table, method_history]
+                BirdType.append([detection_status,[],[],RewardTable, []])
+                
+                rand_sound = random.randint(0,len(Sound)-1)
+                rand_volume = random.randint(0,Sound_Volume_Level_degree-1)
+                play_rellering_mothod([rand_sound,rand_volume])
+                THREAT_PLAYING_FLAG = True
+                enduring_time = 1
+                reward = INCREASE_REWARD
+                update_reward([rand_sound,rand_volume], detection_status, reward)
+                BirdType[detection_status-1][4].append([rand_sound,rand_volume])
+                
+
+            else :
+                # Re-invasion Case
+                if THREAT_PLAYING_FLAG == False :
+                    print(f'Detect Re-invasion bird num {detection_status}')
+                    now_reinvasion_time = get_before_invasion_time(observed_env_data[:t+1],detection_status)
+                    BirdType[detection_status-1][1].append(now_reinvasion_time)
+                    if len(BirdType[detection_status-1][1]) > 1:
+                        # play_sound_num = find_max_reward_table(BirdType[detection_status-1][3])
+                        RTT = BirdType[detection_status-1][3][-1] - BirdType[detection_status-1][3][-2]
+                        if RTT > 0 : # Long-term adaptation was increase - good
+                            reward = 0.0
+                        else : # Long-term adaptation was decrease - bad
+                            reward = LONGTERM_DECREASE_REWARD
+                    else: # Re-invasion on no history
+                        reward = 0.0
+
+                    THREAT_PLAYING_FLAG = True
+                    enduring_time = 1
+                    
+                    update_reward(BirdType[detection_status-1][4][-1], detection_status, reward)
+                    
+                    play_treat_method = find_max_reward_table(BirdType[detection_status-1][3])
+                    play_rellering_mothod(play_treat_method)
+                    
+                    
+                # Enduring Case
+                else:
+                    if THREAT_PLAYING_FLAG == True:  # Short-term case - good
+                        print(f'Endure now method {Sound[BirdType[detection_status-1][4][-1][0]]} level {BirdType[detection_status-1][4][-1][1]+1}')
+                        enduring_time += 1        
+
+                        print(f'Current Threat Method: {Sound[BirdType[detection_status-1][4][-1][0]]} Level {BirdType[detection_status-1][4][-1][1] + 1}')
+                        
+                        with open("/home/hyun/project/data.pkl", "wb") as pickle_file:
+                            pickle.dump((Sound[BirdType[detection_status-1][4][-1][0]], BirdType[detection_status-1][4][-1][1] + 1), pickle_file)
+
+
+                    if enduring_time > ENDURING_TIME_THRESHOLD:  # Short-term case - bad
+
+                        reward = -(enduring_time/ENDURING_TIME_THRESHOLD)
+                        update_reward(BirdType[detection_status-1][4][-1], detection_status, reward)
+                        
+                        play_treat_method = find_max_reward_table(BirdType[detection_status-1][3])
+                        play_rellering_mothod(play_treat_method)                        
+                        
+                        print(f'Over enduring threshold. Change method from {Sound[BirdType[detection_status-1][4][-1][0]]} level {BirdType[detection_status-1][4][-1][1]+1} to {Sound[play_treat_method[0]]} level {play_treat_method[1]}')
+                        BirdType[detection_status-1][4].append(play_treat_method)
+                        enduring_time = 1
+                                    
+        elif detection_status == 0:
+            if enduring_time != 0:
+                print(f'Success repelling')
+                THREAT_PLAYING_FLAG = False
+                #insert new enduring time
+                BirdType[detection_status-1][2].append(enduring_time)
+                enduring_time = 0
+    print('Algorithm end')
+    
+
+if __name__ == '__main__':
+    main()
